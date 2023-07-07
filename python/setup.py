@@ -13,5 +13,5 @@ setup(
     url='https://github.com/ROBOTIS-GIT/DynamixelSDK',
     author='Leon Jung',
     author_email='rwjung@robotis.com',
-    install_requires=['pyserial']
+    install_requires=['pyserial', 'aioserial']
 )
