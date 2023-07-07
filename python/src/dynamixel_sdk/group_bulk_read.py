@@ -20,6 +20,7 @@
 # Author: Ryu Woon Jung (Leon)
 
 from .robotis_def import *
+from .protocol2_packet_handler import PKT_ID, PKT_PARAMETER0
 
 PARAM_NUM_DATA = 0
 PARAM_NUM_ADDRESS = 1
@@ -78,7 +79,7 @@ class GroupBulkRead:
         self.data_dict.clear()
         return
 
-    def txPacket(self):
+    async def txPacket(self):
         if len(self.data_dict.keys()) == 0:
             return COMM_NOT_AVAILABLE
 
@@ -86,11 +87,11 @@ class GroupBulkRead:
             self.makeParam()
 
         if self.ph.getProtocolVersion() == 1.0:
-            return self.ph.bulkReadTx(self.port, self.param, len(self.data_dict.keys()) * 3)
+            return await self.ph.bulkReadTx(self.port, self.param, len(self.data_dict.keys()) * 3)
         else:
-            return self.ph.bulkReadTx(self.port, self.param, len(self.data_dict.keys()) * 5)
+            return await self.ph.bulkReadTx(self.port, self.param, len(self.data_dict.keys()) * 5)
 
-    def rxPacket(self):
+    async def rxPacket(self):
         self.last_result = False
 
         result = COMM_RX_FAIL
@@ -99,7 +100,7 @@ class GroupBulkRead:
             return COMM_NOT_AVAILABLE
 
         for dxl_id in self.data_dict:
-            self.data_dict[dxl_id][PARAM_NUM_DATA], result, _ = self.ph.readRx(self.port, dxl_id,
+            self.data_dict[dxl_id][PARAM_NUM_DATA], result, _ = await self.ph.readRx(self.port, dxl_id,
                                                                                self.data_dict[dxl_id][PARAM_NUM_LENGTH])
             if result != COMM_SUCCESS:
                 return result
@@ -109,12 +110,13 @@ class GroupBulkRead:
 
         return result
 
-    def txRxPacket(self):
-        result = self.txPacket()
-        if result != COMM_SUCCESS:
-            return result
+    async def txRxPacket(self):
+        async with self.port.lock:
+            result = await self.txPacket()
+            if result != COMM_SUCCESS:
+                return result
 
-        return self.rxPacket()
+            return await self.rxPacket()
 
     def isAvailable(self, dxl_id, address, data_length):
         if self.last_result is False or dxl_id not in self.data_dict:

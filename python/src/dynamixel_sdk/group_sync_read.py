@@ -20,6 +20,7 @@
 # Author: Ryu Woon Jung (Leon)
 
 from .robotis_def import *
+from .protocol2_packet_handler import PKT_ID, PKT_PARAMETER0
 
 
 class GroupSyncRead:
@@ -77,17 +78,17 @@ class GroupSyncRead:
 
         self.data_dict.clear()
 
-    def txPacket(self):
+    async def txPacket(self):
         if self.ph.getProtocolVersion() == 1.0 or len(self.data_dict.keys()) == 0:
             return COMM_NOT_AVAILABLE
 
         if self.is_param_changed is True or not self.param:
             self.makeParam()
 
-        return self.ph.syncReadTx(self.port, self.start_address, self.data_length, self.param,
+        return await self.ph.syncReadTx(self.port, self.start_address, self.data_length, self.param,
                                   len(self.data_dict.keys()) * 1)
 
-    def rxPacket(self):
+    async def rxPacket(self):
         self.last_result = False
 
         if self.ph.getProtocolVersion() == 1.0:
@@ -99,7 +100,7 @@ class GroupSyncRead:
             return COMM_NOT_AVAILABLE
 
         for dxl_id in self.data_dict:
-            self.data_dict[dxl_id], result, _ = self.ph.readRx(self.port, dxl_id, self.data_length)
+            self.data_dict[dxl_id], result, _ =  await self.ph.readRx(self.port, dxl_id, self.data_length)
             if result != COMM_SUCCESS:
                 return result
 
@@ -108,15 +109,16 @@ class GroupSyncRead:
 
         return result
 
-    def txRxPacket(self):
+    async def txRxPacket(self):
         if self.ph.getProtocolVersion() == 1.0:
             return COMM_NOT_AVAILABLE
 
-        result = self.txPacket()
-        if result != COMM_SUCCESS:
-            return result
+        async with self.port.lock:
+            result = await self.txPacket()
+            if result != COMM_SUCCESS:
+                return result
 
-        return self.rxPacket()
+            return await self.rxPacket()
 
     def isAvailable(self, dxl_id, address, data_length):
         if self.ph.getProtocolVersion() == 1.0 or self.last_result is False or dxl_id not in self.data_dict:

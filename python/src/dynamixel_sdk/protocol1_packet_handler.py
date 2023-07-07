@@ -93,17 +93,12 @@ class Protocol1PacketHandler(object):
 
         return ""
 
-    def txPacket(self, port, txpacket):
+    async def txPacket(self, port, txpacket):
         checksum = 0
         total_packet_length = txpacket[PKT_LENGTH] + 4  # 4: HEADER0 HEADER1 ID LENGTH
 
-        if port.is_using:
-            return COMM_PORT_BUSY
-        port.is_using = True
-
         # check max packet length
         if total_packet_length > TXPACKET_MAX_LEN:
-            port.is_using = False
             return COMM_TX_ERROR
 
         # make packet header
@@ -120,14 +115,13 @@ class Protocol1PacketHandler(object):
 
         # tx packet
         port.clearPort()
-        written_packet_length = port.writePort(txpacket)
+        written_packet_length = await port.writePort(txpacket)
         if total_packet_length != written_packet_length:
-            port.is_using = False
             return COMM_TX_FAIL
 
         return COMM_SUCCESS
 
-    def rxPacket(self, port):
+    async def rxPacket(self, port):
         rxpacket = []
 
         result = COMM_TX_FAIL
@@ -136,7 +130,7 @@ class Protocol1PacketHandler(object):
         wait_length = 6  # minimum length (HEADER0 HEADER1 ID LENGTH ERROR CHKSUM)
 
         while True:
-            rxpacket.extend(port.readPort(wait_length - rx_length))
+            rxpacket.extend(await port.readPort(wait_length - rx_length))
             rx_length = len(rxpacket)
             if rx_length >= wait_length:
                 # find packet header
@@ -145,7 +139,7 @@ class Protocol1PacketHandler(object):
                         break
 
                 if idx == 0:  # found at the beginning of the packet
-                    if (rxpacket[PKT_ID] > 0xFD) or (rxpacket[PKT_LENGTH] > RXPACKET_MAX_LEN) or (
+                    if (rxpacket[PKT_LENGTH] > RXPACKET_MAX_LEN) or (
                             rxpacket[PKT_ERROR] > 0x7F):
                         # unavailable ID or unavailable Length or unavailable Error
                         # remove the first byte in the packet
@@ -195,49 +189,46 @@ class Protocol1PacketHandler(object):
                         result = COMM_RX_CORRUPT
                     break
 
-        port.is_using = False
-
         #print "[RxPacket] %r" % rxpacket
 
         return rxpacket, result
 
     # NOT for BulkRead
-    def txRxPacket(self, port, txpacket):
+    async def txRxPacket(self, port, txpacket):
         rxpacket = None
         error = 0
+        async with port.lock:
+            # tx packet
+            result = await self.txPacket(port, txpacket)
+            if result != COMM_SUCCESS:
+                return rxpacket, result, error
 
-        # tx packet
-        result = self.txPacket(port, txpacket)
-        if result != COMM_SUCCESS:
+            # (Instruction == BulkRead) == this function is not available.
+            if txpacket[PKT_INSTRUCTION] == INST_BULK_READ:
+                result = COMM_NOT_AVAILABLE
+
+            # (ID == Broadcast ID) == no need to wait for status packet or not available
+            if (txpacket[PKT_ID] == BROADCAST_ID):
+                return rxpacket, result, error
+
+            # set packet timeout
+            if txpacket[PKT_INSTRUCTION] == INST_READ:
+                port.setPacketTimeout(txpacket[PKT_PARAMETER0 + 1] + 6)
+            else:
+                port.setPacketTimeout(6)  # HEADER0 HEADER1 ID LENGTH ERROR CHECKSUM
+
+            # rx packet
+            while True:
+                rxpacket, result = await self.rxPacket(port)
+                if result != COMM_SUCCESS or txpacket[PKT_ID] == rxpacket[PKT_ID]:
+                    break
+
+            if result == COMM_SUCCESS and txpacket[PKT_ID] == rxpacket[PKT_ID]:
+                error = rxpacket[PKT_ERROR]
+
             return rxpacket, result, error
 
-        # (Instruction == BulkRead) == this function is not available.
-        if txpacket[PKT_INSTRUCTION] == INST_BULK_READ:
-            result = COMM_NOT_AVAILABLE
-
-        # (ID == Broadcast ID) == no need to wait for status packet or not available
-        if (txpacket[PKT_ID] == BROADCAST_ID):
-            port.is_using = False
-            return rxpacket, result, error
-
-        # set packet timeout
-        if txpacket[PKT_INSTRUCTION] == INST_READ:
-            port.setPacketTimeout(txpacket[PKT_PARAMETER0 + 1] + 6)
-        else:
-            port.setPacketTimeout(6)  # HEADER0 HEADER1 ID LENGTH ERROR CHECKSUM
-
-        # rx packet
-        while True:
-            rxpacket, result = self.rxPacket(port)
-            if result != COMM_SUCCESS or txpacket[PKT_ID] == rxpacket[PKT_ID]:
-                break
-
-        if result == COMM_SUCCESS and txpacket[PKT_ID] == rxpacket[PKT_ID]:
-            error = rxpacket[PKT_ERROR]
-
-        return rxpacket, result, error
-
-    def ping(self, port, dxl_id):
+    async def ping(self, port, dxl_id):
         model_number = 0
         error = 0
 
@@ -250,45 +241,45 @@ class Protocol1PacketHandler(object):
         txpacket[PKT_LENGTH] = 2
         txpacket[PKT_INSTRUCTION] = INST_PING
 
-        rxpacket, result, error = self.txRxPacket(port, txpacket)
+        rxpacket, result, error = await self.txRxPacket(port, txpacket)
 
         if result == COMM_SUCCESS:
-            data_read, result, error = self.readTxRx(port, dxl_id, 0, 2)  # Address 0 : Model Number
+            data_read, result, error = await self.readTxRx(port, dxl_id, 0, 2)  # Address 0 : Model Number
             if result == COMM_SUCCESS:
                 model_number = DXL_MAKEWORD(data_read[0], data_read[1])
 
         return model_number, result, error
 
-    def broadcastPing(self, port):
+    async def broadcastPing(self, port):
         data_list = None
         return data_list, COMM_NOT_AVAILABLE
 
-    def action(self, port, dxl_id):
+    async def action(self, port, dxl_id):
         txpacket = [0] * 6
 
         txpacket[PKT_ID] = dxl_id
         txpacket[PKT_LENGTH] = 2
         txpacket[PKT_INSTRUCTION] = INST_ACTION
 
-        _, result, _ = self.txRxPacket(port, txpacket)
+        _, result, _ = await self.txRxPacket(port, txpacket)
 
         return result
 
-    def reboot(self, port, dxl_id):
+    async def reboot(self, port, dxl_id):
         return COMM_NOT_AVAILABLE, 0
 
-    def factoryReset(self, port, dxl_id):
+    async def factoryReset(self, port, dxl_id):
         txpacket = [0] * 6
 
         txpacket[PKT_ID] = dxl_id
         txpacket[PKT_LENGTH] = 2
         txpacket[PKT_INSTRUCTION] = INST_FACTORY_RESET
 
-        _, result, error = self.txRxPacket(port, txpacket)
+        _, result, error = await self.txRxPacket(port, txpacket)
 
         return result, error
 
-    def readTx(self, port, dxl_id, address, length):
+    async def readTx(self, port, dxl_id, address, length):
 
         txpacket = [0] * 8
 
@@ -301,7 +292,7 @@ class Protocol1PacketHandler(object):
         txpacket[PKT_PARAMETER0 + 0] = address
         txpacket[PKT_PARAMETER0 + 1] = length
 
-        result = self.txPacket(port, txpacket)
+        result = await self.txPacket(port, txpacket)
 
         # set packet timeout
         if result == COMM_SUCCESS:
@@ -309,7 +300,7 @@ class Protocol1PacketHandler(object):
 
         return result
 
-    def readRx(self, port, dxl_id, length):
+    async def readRx(self, port, dxl_id, length):
         result = COMM_TX_FAIL
         error = 0
 
@@ -317,7 +308,7 @@ class Protocol1PacketHandler(object):
         data = []
 
         while True:
-            rxpacket, result = self.rxPacket(port)
+            rxpacket, result = await self.rxPacket(port)
 
             if result != COMM_SUCCESS or rxpacket[PKT_ID] == dxl_id:
                 break
@@ -329,7 +320,7 @@ class Protocol1PacketHandler(object):
 
         return data, result, error
 
-    def readTxRx(self, port, dxl_id, address, length):
+    async def readTxRx(self, port, dxl_id, address, length):
         txpacket = [0] * 8
         data = []
 
@@ -342,7 +333,7 @@ class Protocol1PacketHandler(object):
         txpacket[PKT_PARAMETER0 + 0] = address
         txpacket[PKT_PARAMETER0 + 1] = length
 
-        rxpacket, result, error = self.txRxPacket(port, txpacket)
+        rxpacket, result, error = await self.txRxPacket(port, txpacket)
         if result == COMM_SUCCESS:
             error = rxpacket[PKT_ERROR]
 
@@ -350,48 +341,48 @@ class Protocol1PacketHandler(object):
 
         return data, result, error
 
-    def read1ByteTx(self, port, dxl_id, address):
-        return self.readTx(port, dxl_id, address, 1)
+    async def read1ByteTx(self, port, dxl_id, address):
+        return await self.readTx(port, dxl_id, address, 1)
 
-    def read1ByteRx(self, port, dxl_id):
+    async def read1ByteRx(self, port, dxl_id):
         data, result, error = self.readRx(port, dxl_id, 1)
         data_read = data[0] if (result == COMM_SUCCESS) else 0
-        return data_read, result, error
+        return await data_read, result, error
 
-    def read1ByteTxRx(self, port, dxl_id, address):
+    async def read1ByteTxRx(self, port, dxl_id, address):
         data, result, error = self.readTxRx(port, dxl_id, address, 1)
         data_read = data[0] if (result == COMM_SUCCESS) else 0
-        return data_read, result, error
+        return await data_read, result, error
 
-    def read2ByteTx(self, port, dxl_id, address):
-        return self.readTx(port, dxl_id, address, 2)
+    async def read2ByteTx(self, port, dxl_id, address):
+        return await self.readTx(port, dxl_id, address, 2)
 
-    def read2ByteRx(self, port, dxl_id):
-        data, result, error = self.readRx(port, dxl_id, 2)
+    async def read2ByteRx(self, port, dxl_id):
+        data, result, error = await self.readRx(port, dxl_id, 2)
         data_read = DXL_MAKEWORD(data[0], data[1]) if (result == COMM_SUCCESS) else 0
         return data_read, result, error
 
-    def read2ByteTxRx(self, port, dxl_id, address):
-        data, result, error = self.readTxRx(port, dxl_id, address, 2)
+    async def read2ByteTxRx(self, port, dxl_id, address):
+        data, result, error = await self.readTxRx(port, dxl_id, address, 2)
         data_read = DXL_MAKEWORD(data[0], data[1]) if (result == COMM_SUCCESS) else 0
         return data_read, result, error
 
-    def read4ByteTx(self, port, dxl_id, address):
-        return self.readTx(port, dxl_id, address, 4)
+    async def read4ByteTx(self, port, dxl_id, address):
+        return await self.readTx(port, dxl_id, address, 4)
 
-    def read4ByteRx(self, port, dxl_id):
-        data, result, error = self.readRx(port, dxl_id, 4)
+    async def read4ByteRx(self, port, dxl_id):
+        data, result, error = await self.readRx(port, dxl_id, 4)
         data_read = DXL_MAKEDWORD(DXL_MAKEWORD(data[0], data[1]),
                                   DXL_MAKEWORD(data[2], data[3])) if (result == COMM_SUCCESS) else 0
         return data_read, result, error
 
-    def read4ByteTxRx(self, port, dxl_id, address):
-        data, result, error = self.readTxRx(port, dxl_id, address, 4)
+    async def read4ByteTxRx(self, port, dxl_id, address):
+        data, result, error = await self.readTxRx(port, dxl_id, address, 4)
         data_read = DXL_MAKEDWORD(DXL_MAKEWORD(data[0], data[1]),
                                   DXL_MAKEWORD(data[2], data[3])) if (result == COMM_SUCCESS) else 0
         return data_read, result, error
 
-    def writeTxOnly(self, port, dxl_id, address, length, data):
+    async def writeTxOnly(self, port, dxl_id, address, length, data):
         txpacket = [0] * (length + 7)
 
         txpacket[PKT_ID] = dxl_id
@@ -401,12 +392,12 @@ class Protocol1PacketHandler(object):
 
         txpacket[PKT_PARAMETER0 + 1: PKT_PARAMETER0 + 1 + length] = data[0: length]
 
-        result = self.txPacket(port, txpacket)
-        port.is_using = False
+        async with port.lock:
+            result = await self.txPacket(port, txpacket)
 
         return result
 
-    def writeTxRx(self, port, dxl_id, address, length, data):
+    async def writeTxRx(self, port, dxl_id, address, length, data):
         txpacket = [0] * (length + 7)
 
         txpacket[PKT_ID] = dxl_id
@@ -415,41 +406,41 @@ class Protocol1PacketHandler(object):
         txpacket[PKT_PARAMETER0] = address
 
         txpacket[PKT_PARAMETER0 + 1: PKT_PARAMETER0 + 1 + length] = data[0: length]
-        rxpacket, result, error = self.txRxPacket(port, txpacket)
+        rxpacket, result, error = await self.txRxPacket(port, txpacket)
 
         return result, error
 
-    def write1ByteTxOnly(self, port, dxl_id, address, data):
+    async def write1ByteTxOnly(self, port, dxl_id, address, data):
         data_write = [data]
-        return self.writeTxOnly(port, dxl_id, address, 1, data_write)
+        return await self.writeTxOnly(port, dxl_id, address, 1, data_write)
 
-    def write1ByteTxRx(self, port, dxl_id, address, data):
+    async def write1ByteTxRx(self, port, dxl_id, address, data):
         data_write = [data]
-        return self.writeTxRx(port, dxl_id, address, 1, data_write)
+        return await self.writeTxRx(port, dxl_id, address, 1, data_write)
 
-    def write2ByteTxOnly(self, port, dxl_id, address, data):
+    async def write2ByteTxOnly(self, port, dxl_id, address, data):
         data_write = [DXL_LOBYTE(data), DXL_HIBYTE(data)]
-        return self.writeTxOnly(port, dxl_id, address, 2, data_write)
+        return await self.writeTxOnly(port, dxl_id, address, 2, data_write)
 
-    def write2ByteTxRx(self, port, dxl_id, address, data):
+    async def write2ByteTxRx(self, port, dxl_id, address, data):
         data_write = [DXL_LOBYTE(data), DXL_HIBYTE(data)]
-        return self.writeTxRx(port, dxl_id, address, 2, data_write)
+        return await self.writeTxRx(port, dxl_id, address, 2, data_write)
 
-    def write4ByteTxOnly(self, port, dxl_id, address, data):
+    async def write4ByteTxOnly(self, port, dxl_id, address, data):
         data_write = [DXL_LOBYTE(DXL_LOWORD(data)),
                       DXL_HIBYTE(DXL_LOWORD(data)),
                       DXL_LOBYTE(DXL_HIWORD(data)),
                       DXL_HIBYTE(DXL_HIWORD(data))]
-        return self.writeTxOnly(port, dxl_id, address, 4, data_write)
+        return await self.writeTxOnly(port, dxl_id, address, 4, data_write)
 
-    def write4ByteTxRx(self, port, dxl_id, address, data):
+    async def write4ByteTxRx(self, port, dxl_id, address, data):
         data_write = [DXL_LOBYTE(DXL_LOWORD(data)),
                       DXL_HIBYTE(DXL_LOWORD(data)),
                       DXL_LOBYTE(DXL_HIWORD(data)),
                       DXL_HIBYTE(DXL_HIWORD(data))]
-        return self.writeTxRx(port, dxl_id, address, 4, data_write)
+        return await self.writeTxRx(port, dxl_id, address, 4, data_write)
 
-    def regWriteTxOnly(self, port, dxl_id, address, length, data):
+    async def regWriteTxOnly(self, port, dxl_id, address, length, data):
         txpacket = [0] * (length + 7)
 
         txpacket[PKT_ID] = dxl_id
@@ -459,12 +450,12 @@ class Protocol1PacketHandler(object):
 
         txpacket[PKT_PARAMETER0 + 1: PKT_PARAMETER0 + 1 + length] = data[0: length]
 
-        result = self.txPacket(port, txpacket)
-        port.is_using = False
+        async with port.lock:
+            result = await self.txPacket(port, txpacket)
 
         return result
 
-    def regWriteTxRx(self, port, dxl_id, address, length, data):
+    async def regWriteTxRx(self, port, dxl_id, address, length, data):
         txpacket = [0] * (length + 7)
 
         txpacket[PKT_ID] = dxl_id
@@ -474,14 +465,14 @@ class Protocol1PacketHandler(object):
 
         txpacket[PKT_PARAMETER0 + 1: PKT_PARAMETER0 + 1 + length] = data[0: length]
 
-        _, result, error = self.txRxPacket(port, txpacket)
+        _, result, error = await self.txRxPacket(port, txpacket)
 
         return result, error
 
-    def syncReadTx(self, port, start_address, data_length, param, param_length):
+    async def syncReadTx(self, port, start_address, data_length, param, param_length):
         return COMM_NOT_AVAILABLE
 
-    def syncWriteTxOnly(self, port, start_address, data_length, param, param_length):
+    async def syncWriteTxOnly(self, port, start_address, data_length, param, param_length):
         txpacket = [0] * (param_length + 8)
         # 8: HEADER0 HEADER1 ID LEN INST START_ADDR DATA_LEN ... CHKSUM
 
@@ -493,11 +484,12 @@ class Protocol1PacketHandler(object):
 
         txpacket[PKT_PARAMETER0 + 2: PKT_PARAMETER0 + 2 + param_length] = param[0: param_length]
 
-        _, result, _ = self.txRxPacket(port, txpacket)
+        async with port.lock:
+            result= await self.txRxPacket(port, txpacket)
 
         return result
 
-    def bulkReadTx(self, port, param, param_length):
+    async def bulkReadTx(self, port, param, param_length):
         txpacket = [0] * (param_length + 7)
         # 7: HEADER0 HEADER1 ID LEN INST 0x00 ... CHKSUM
 
@@ -508,7 +500,7 @@ class Protocol1PacketHandler(object):
 
         txpacket[PKT_PARAMETER0 + 1: PKT_PARAMETER0 + 1 + param_length] = param[0: param_length]
 
-        result = self.txPacket(port, txpacket)
+        result = await self.txPacket(port, txpacket)
         if result == COMM_SUCCESS:
             wait_length = 0
             i = 0
@@ -519,5 +511,5 @@ class Protocol1PacketHandler(object):
 
         return result
 
-    def bulkWriteTxOnly(self, port, param, param_length):
+    async def bulkWriteTxOnly(self, port, param, param_length):
         return COMM_NOT_AVAILABLE

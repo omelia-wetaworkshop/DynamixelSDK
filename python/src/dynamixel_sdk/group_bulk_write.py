@@ -99,11 +99,11 @@ class GroupBulkWrite:
         self.data_list.clear()
         return
 
-    def txPacket(self):
+    async def txPacket(self):
         if self.ph.getProtocolVersion() == 1.0 or len(self.data_list.keys()) == 0:
             return COMM_NOT_AVAILABLE
 
         if self.is_param_changed is True or len(self.param) == 0:
             self.makeParam()
 
-        return self.ph.bulkWriteTxOnly(self.port, self.param, len(self.param))
+        return await self.ph.bulkWriteTxOnly(self.port, self.param, len(self.param))

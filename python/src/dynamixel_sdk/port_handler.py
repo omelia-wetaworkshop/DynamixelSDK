@@ -21,8 +21,10 @@
 
 import time
 import serial
+import aioserial
 import sys
 import platform
+import asyncio
 
 LATENCY_TIMER = 16
 DEFAULT_BAUDRATE = 1000000
@@ -36,7 +38,7 @@ class PortHandler(object):
         self.packet_timeout = 0.0
         self.tx_time_per_byte = 0.0
 
-        self.is_using = False
+        self.lock = asyncio.Lock()
         self.port_name = port_name
         self.ser = None
 
@@ -73,14 +75,11 @@ class PortHandler(object):
     def getBytesAvailable(self):
         return self.ser.in_waiting
 
-    def readPort(self, length):
-        if (sys.version_info > (3, 0)):
-            return self.ser.read(length)
-        else:
-            return [ord(ch) for ch in self.ser.read(length)]
+    async def readPort(self, length):
+        return await self.ser.read_async(length)
 
-    def writePort(self, packet):
-        return self.ser.write(packet)
+    async def writePort(self, packet):
+        return await self.ser.write_async(packet)
 
     def setPacketTimeout(self, packet_length):
         self.packet_start_time = self.getCurrentTime()
@@ -111,7 +110,7 @@ class PortHandler(object):
         if self.is_open:
             self.closePort()
 
-        self.ser = serial.Serial(
+        self.ser = aioserial.AioSerial(
             port=self.port_name,
             baudrate=self.baudrate,
             # parity = serial.PARITY_ODD,
