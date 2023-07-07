@@ -147,3 +147,47 @@ class GroupBulkRead:
                                               self.data_dict[dxl_id][PARAM_NUM_DATA][address - start_addr + 3]))
         else:
             return 0
+
+class GroupFastBulkRead(GroupBulkRead):
+    def makeParam(self):
+        if not self.data_dict or self.ph.getProtocolVersion() == 1.0:
+            return
+
+        self.param = []
+
+        for dxl_id, data in self.data_dict.items():
+            self.param.append(dxl_id)  # ID
+            self.param.append(DXL_LOBYTE(data[PARAM_NUM_ADDRESS]))  # ADDR_L
+            self.param.append(DXL_HIBYTE(data[PARAM_NUM_ADDRESS]))  # ADDR_H
+            self.param.append(DXL_LOBYTE(data[PARAM_NUM_LENGTH]))  # LEN_L
+            self.param.append(DXL_HIBYTE(data[PARAM_NUM_LENGTH]))  # LEN_H
+
+    async def txPacket(self):
+        if self.ph.getProtocolVersion() != 2.0 or not self.data_dict:
+            return COMM_NOT_AVAILABLE
+
+        if self.is_param_changed is True or not self.param:
+            self.makeParam()
+
+        return await self.ph.fastBulkReadTx(self.port, self.param, len(self.data_dict.keys()) * 5)
+
+    async def rxPacket(self):
+        self.last_result = False
+
+        result = COMM_RX_FAIL
+
+        if self.ph.getProtocolVersion() == 1.0 or not self.data_dict:
+            return COMM_NOT_AVAILABLE
+
+        while True:
+            rxpacket, result = await self.ph.rxPacket(self.port, skip_stuffing=True)
+            if result != COMM_SUCCESS or rxpacket[PKT_ID] == BROADCAST_ID:
+                break
+        if result == COMM_SUCCESS and rxpacket[PKT_ID] == BROADCAST_ID:
+            index = PKT_PARAMETER0
+            for data in self.data_dict.values():
+                data[PARAM_NUM_DATA] = rxpacket[index + 2:index + 2 + data[PARAM_NUM_LENGTH]]
+                index += data[PARAM_NUM_LENGTH] + 4
+            self.last_result = True
+
+        return result

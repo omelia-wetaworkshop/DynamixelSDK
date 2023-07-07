@@ -145,3 +145,39 @@ class GroupSyncRead:
                                               self.data_dict[dxl_id][address - self.start_address + 3]))
         else:
             return 0
+
+
+class GroupFastSyncRead(GroupSyncRead):
+    async def txPacket(self):
+        if self.ph.getProtocolVersion() == 1.0 or len(self.data_dict.keys()) == 0:
+            return COMM_NOT_AVAILABLE
+
+        if self.is_param_changed is True or not self.param:
+            self.makeParam()
+
+        return await self.ph.fastSyncReadTX(self.port, self.start_address, self.data_length, self.param,
+                                  len(self.data_dict.keys()) * 1)
+
+
+    async def rxPacket(self):
+        self.last_result = False
+
+        if self.ph.getProtocolVersion() == 1.0  or not self.data_dict:
+            return COMM_NOT_AVAILABLE
+
+        result = COMM_RX_FAIL
+
+        while True:
+            rxpacket, result = await self.ph.rxPacket(self.port, skip_stuffing=True)
+
+            if result != COMM_SUCCESS or rxpacket[PKT_ID] == BROADCAST_ID:
+                break
+        
+        if result == COMM_SUCCESS and rxpacket[PKT_ID] == BROADCAST_ID:
+            index = PKT_PARAMETER0
+            for dxl_id in self.data_dict:
+                self.data_dict[dxl_id] = rxpacket[index+2:index + 2 + self.data_length]
+                index += self.data_length + 4
+            self.last_result = True
+
+        return result

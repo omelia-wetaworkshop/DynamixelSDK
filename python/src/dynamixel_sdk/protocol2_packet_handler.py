@@ -778,3 +778,49 @@ class Protocol2PacketHandler(object):
             result = await self.txRxPacket(port, txpacket)
 
         return result
+
+    async def fastSyncReadTX(self, port, start_address, data_length, param, param_length):
+        txpacket = [0] * (param_length + 14)
+        # 14: HEADER0 HEADER1 HEADER2 RESERVED ID LEN_L LEN_H INST START_ADDR_L START_ADDR_H DATA_LEN_L DATA_LEN_H CRC16_L CRC16_H
+
+        txpacket[PKT_ID] = BROADCAST_ID
+        txpacket[PKT_LENGTH_L] = DXL_LOBYTE(
+            param_length + 7)  # 7: INST START_ADDR_L START_ADDR_H DATA_LEN_L DATA_LEN_H CRC16_L CRC16_H
+        txpacket[PKT_LENGTH_H] = DXL_HIBYTE(
+            param_length + 7)  # 7: INST START_ADDR_L START_ADDR_H DATA_LEN_L DATA_LEN_H CRC16_L CRC16_H
+        txpacket[PKT_INSTRUCTION] = INST_FAST_SYNC_READ
+        txpacket[PKT_PARAMETER0 + 0] = DXL_LOBYTE(start_address)
+        txpacket[PKT_PARAMETER0 + 1] = DXL_HIBYTE(start_address)
+        txpacket[PKT_PARAMETER0 + 2] = DXL_LOBYTE(data_length)
+        txpacket[PKT_PARAMETER0 + 3] = DXL_HIBYTE(data_length)
+
+        for s in range(param_length):
+            txpacket[PKT_PARAMETER0 + 4 + s] = param[s]
+
+        result = await self.txPacket(port, txpacket)
+        if result == COMM_SUCCESS:
+            port.setPacketTimeout((11 + data_length) * param_length) # TODO: CHECK THIS
+
+        return result
+    
+    async def fastBulkReadTx(self, port, param, param_length):
+        txpacket = [0] * (param_length + 10)
+        # 10: HEADER0 HEADER1 HEADER2 RESERVED ID LEN_L LEN_H INST CRC16_L CRC16_H
+
+        txpacket[PKT_ID] = BROADCAST_ID
+        txpacket[PKT_LENGTH_L] = DXL_LOBYTE(param_length + 3)  # 3: INST CRC16_L CRC16_H
+        txpacket[PKT_LENGTH_H] = DXL_HIBYTE(param_length + 3)  # 3: INST CRC16_L CRC16_H
+        txpacket[PKT_INSTRUCTION] = INST_FAST_BULK_READ
+
+        txpacket[PKT_PARAMETER0: PKT_PARAMETER0 + param_length] = param[0: param_length]
+
+        result = await self.txPacket(port, txpacket)
+        if result == COMM_SUCCESS:
+            wait_length = 0
+            i = 0
+            while i < param_length:
+                wait_length += DXL_MAKEWORD(param[i + 3], param[i + 4]) + 10
+                i += 5
+            port.setPacketTimeout(wait_length)
+
+        return result
