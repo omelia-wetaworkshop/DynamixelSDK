@@ -484,8 +484,7 @@ class Protocol1PacketHandler(object):
 
         txpacket[PKT_PARAMETER0 + 2: PKT_PARAMETER0 + 2 + param_length] = param[0: param_length]
 
-        async with port.lock:
-            result= await self.txRxPacket(port, txpacket)
+        result= await self.txRxPacket(port, txpacket)
 
         return result
 
