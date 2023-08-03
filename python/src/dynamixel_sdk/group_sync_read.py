@@ -20,11 +20,11 @@
 # Author: Ryu Woon Jung (Leon)
 
 from .robotis_def import *
-from .protocol2_packet_handler import PKT_ID, PKT_PARAMETER0
-
+from .protocol2_packet_handler import PKT_ID, PKT_PARAMETER0, Protocol2PacketHandler
+from .port_handler import PortHandler
 
 class GroupSyncRead:
-    def __init__(self, port, ph, start_address, data_length):
+    def __init__(self, port: PortHandler, ph: Protocol2PacketHandler, start_address, data_length):
         self.port = port
         self.ph = ph
         self.start_address = start_address

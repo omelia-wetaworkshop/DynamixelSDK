@@ -20,10 +20,11 @@
 # Author: Ryu Woon Jung (Leon)
 
 from .robotis_def import *
-
+from .port_handler import PortHandler
+from .protocol2_packet_handler import Protocol2PacketHandler
 
 class GroupSyncWrite:
-    def __init__(self, port, ph, start_address, data_length):
+    def __init__(self, port: PortHandler, ph: Protocol2PacketHandler, start_address, data_length):
         self.port = port
         self.ph = ph
         self.start_address = start_address

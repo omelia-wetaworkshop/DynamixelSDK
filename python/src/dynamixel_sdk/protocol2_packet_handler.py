@@ -20,6 +20,7 @@
 # Author: Ryu Woon Jung (Leon)
 
 from .robotis_def import *
+from .port_handler import PortHandler
 
 TXPACKET_MAX_LEN = 1 * 1024
 RXPACKET_MAX_LEN = 1 * 1024
@@ -209,7 +210,7 @@ class Protocol2PacketHandler(object):
 
         return packet
 
-    async def txPacket(self, port, txpacket):
+    async def txPacket(self, port: PortHandler, txpacket):
 
         # byte stuffing for header
         self.addStuffing(txpacket)
@@ -234,14 +235,14 @@ class Protocol2PacketHandler(object):
         txpacket[total_packet_length - 1] = DXL_HIBYTE(crc)
 
         # tx packet
-        port.clearPort()
+        # port.clearPort()
         written_packet_length = await port.writePort(txpacket)
         if total_packet_length != written_packet_length:
             return COMM_TX_FAIL
 
         return COMM_SUCCESS
 
-    async def rxPacket(self, port, skip_stuffing=False):
+    async def rxPacket(self, port: PortHandler, skip_stuffing=False):
         rxpacket = []
 
         result = COMM_TX_FAIL
@@ -308,7 +309,7 @@ class Protocol2PacketHandler(object):
         return rxpacket, result
 
     # NOT for BulkRead / SyncRead instruction
-    async def txRxPacket(self, port, txpacket):
+    async def txRxPacket(self, port: PortHandler, txpacket):
         rxpacket = None
         error = 0
         async with port.lock:
@@ -719,7 +720,7 @@ class Protocol2PacketHandler(object):
 
         return result
 
-    async def syncWriteTxOnly(self, port, start_address, data_length, param, param_length):
+    async def syncWriteTxOnly(self, port: PortHandler, start_address, data_length, param, param_length):
         txpacket = [0] * (param_length + 14)
         # 14: HEADER0 HEADER1 HEADER2 RESERVED ID LEN_L LEN_H INST START_ADDR_L START_ADDR_H DATA_LEN_L DATA_LEN_H CRC16_L CRC16_H
 
@@ -735,10 +736,8 @@ class Protocol2PacketHandler(object):
         txpacket[PKT_PARAMETER0 + 3] = DXL_HIBYTE(data_length)
 
         txpacket[PKT_PARAMETER0 + 4: PKT_PARAMETER0 + 4 + param_length] = param[0: param_length]
-
-        result = await self.txPacket(port, txpacket)
-
-        return result
+        async with port.lock:
+            return await self.txPacket(port, txpacket)
 
     async def bulkReadTx(self, port, param, param_length):
         txpacket = [0] * (param_length + 10)
@@ -762,7 +761,7 @@ class Protocol2PacketHandler(object):
 
         return result
 
-    async def bulkWriteTxOnly(self, port, param, param_length):
+    async def bulkWriteTxOnly(self, port: PortHandler, param, param_length):
         txpacket = [0] * (param_length + 10)
         # 10: HEADER0 HEADER1 HEADER2 RESERVED ID LEN_L LEN_H INST CRC16_L CRC16_H
 
@@ -773,9 +772,7 @@ class Protocol2PacketHandler(object):
 
         txpacket[PKT_PARAMETER0: PKT_PARAMETER0 + param_length] = param[0: param_length]
 
-        result = await self.txRxPacket(port, txpacket)
-
-        return result
+        return await self.txPacket(port, txpacket)
 
     async def fastSyncReadTX(self, port, start_address, data_length, param, param_length):
         txpacket = [0] * (param_length + 14)
