@@ -45,7 +45,7 @@ class GroupSyncRead:
 
         self.param = []
 
-        for dxl_id in self.data_dict:
+        for dxl_id in self.data_dict.keys(): # pylint: disable=consider-iterating-dictionary
             self.param.append(dxl_id)
 
     def addParam(self, dxl_id):
@@ -98,7 +98,7 @@ class GroupSyncRead:
         if len(self.data_dict.keys()) == 0:
             return COMM_NOT_AVAILABLE
 
-        for dxl_id in self.data_dict:
+        for dxl_id in self.data_dict.keys(): # pylint: disable=consider-using-dict-items,consider-iterating-dictionary
             self.data_dict[dxl_id], result, _ = self.ph.readRx(self.port, dxl_id, self.data_length)
             if result != COMM_SUCCESS:
                 return result
