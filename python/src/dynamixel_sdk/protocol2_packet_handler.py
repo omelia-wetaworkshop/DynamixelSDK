@@ -235,7 +235,7 @@ class Protocol2PacketHandler(object):
         txpacket[total_packet_length - 1] = DXL_HIBYTE(crc)
 
         # tx packet
-        # port.clearPort()
+        port.clearPort()
         written_packet_length = await port.writePort(txpacket)
         if total_packet_length != written_packet_length:
             return COMM_TX_FAIL
@@ -736,8 +736,8 @@ class Protocol2PacketHandler(object):
         txpacket[PKT_PARAMETER0 + 3] = DXL_HIBYTE(data_length)
 
         txpacket[PKT_PARAMETER0 + 4: PKT_PARAMETER0 + 4 + param_length] = param[0: param_length]
-        async with port.lock:
-            return await self.txPacket(port, txpacket)
+        # async with port.lock:
+        return await self.txPacket(port, txpacket)
 
     async def bulkReadTx(self, port, param, param_length):
         txpacket = [0] * (param_length + 10)
