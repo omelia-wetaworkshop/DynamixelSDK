@@ -44,7 +44,7 @@ class GroupBulkRead:
 
         self.param = []
 
-        for dxl_id in self.data_dict:
+        for dxl_id in self.data_dict.keys():
             if self.ph.getProtocolVersion() == 1.0:
                 self.param.append(self.data_dict[dxl_id][2])  # LEN
                 self.param.append(dxl_id)  # ID

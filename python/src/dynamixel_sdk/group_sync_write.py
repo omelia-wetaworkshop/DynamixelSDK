@@ -41,7 +41,7 @@ class GroupSyncWrite:
 
         self.param = []
 
-        for dxl_id in self.data_dict:
+        for dxl_id in self.data_dict.keys():
             if not self.data_dict[dxl_id]:
                 return
 
