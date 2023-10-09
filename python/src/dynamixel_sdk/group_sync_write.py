@@ -19,9 +19,10 @@
 
 # Author: Ryu Woon Jung (Leon)
 
-from .robotis_def import *
 from .port_handler import PortHandler
 from .protocol2_packet_handler import Protocol2PacketHandler
+from .robotis_def import *
+
 
 class GroupSyncWrite:
     def __init__(self, port: PortHandler, ph: Protocol2PacketHandler, start_address, data_length):
@@ -92,6 +93,6 @@ class GroupSyncWrite:
             self.makeParam()
 
         self.is_param_changed = False
+        packet_len = len(self.data_dict.keys()) * (1 + self.data_length)
         async with self.port.lock:
-            return await self.ph.syncWriteTxOnly(self.port, self.start_address, self.data_length, self.param,
-                                       len(self.data_dict.keys()) * (1 + self.data_length))
+            return await self.ph.syncWriteTxOnly(self.port, self.start_address, self.data_length, self.param, packet_len)
